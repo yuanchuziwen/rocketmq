@@ -61,13 +61,16 @@ public class BatchUnregistrationService extends ServiceThread {
     public void run() {
         while (!this.isStopped()) {
             try {
+                // 从 blockingQueue 中获取一个请求，当从阻塞状态返回时，说明有请求到来（take 类似 poll）
                 final UnRegisterBrokerRequestHeader request = unregistrationQueue.take();
+                // 继续取出所有的 request
                 Set<UnRegisterBrokerRequestHeader> unregistrationRequests = new HashSet<>();
                 unregistrationQueue.drainTo(unregistrationRequests);
 
                 // Add polled request
                 unregistrationRequests.add(request);
 
+                // 批量注销 broker
                 this.routeInfoManager.unRegisterBroker(unregistrationRequests);
             } catch (Throwable e) {
                 log.error("Handle unregister broker request failed", e);

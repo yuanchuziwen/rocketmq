@@ -70,10 +70,21 @@ public class RouteInfoManager {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
     private final static long DEFAULT_BROKER_CHANNEL_EXPIRED_TIME = 1000 * 60 * 2;
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
+
+    // topic 消息队列的路由信息，消息发送时根据路由表进行负载均衡
     private final Map<String/* topic */, Map<String, QueueData>> topicQueueTable;
+
+    // Broker 基础信息，包含 brokerName、所属集群名称、主备 Broker 地址
     private final Map<String/* brokerName */, BrokerData> brokerAddrTable;
+
+    // Broker 集群信息，存储集群中所有 Broker 的名称
     private final Map<String/* clusterName */, Set<String/* brokerName */>> clusterAddrTable;
+
+    // Broker 状态信息，NameServer 每次收到心跳包时会替换该信息
     private final Map<BrokerAddrInfo/* brokerAddr */, BrokerLiveInfo> brokerLiveTable;
+
+    // Broker 上的 FilterServer 列表，用于类模式消息过滤。
+    // 类模式过滤机制在 4.4 及以后版本被废弃。
     private final Map<BrokerAddrInfo/* brokerAddr */, List<String>/* Filter Server */> filterServerTable;
     private final Map<String/* topic */, Map<String/*brokerName*/, TopicQueueMappingInfo>> topicQueueMappingInfoTable;
 
@@ -758,12 +769,16 @@ public class RouteInfoManager {
     }
 
     public void scanNotActiveBroker() {
+        // 被定时任务调度，定时检查 Broker 的存活状态
         try {
             log.info("start scanNotActiveBroker");
+            // 遍历每一个 broker
             for (Entry<BrokerAddrInfo, BrokerLiveInfo> next : this.brokerLiveTable.entrySet()) {
                 long last = next.getValue().getLastUpdateTimestamp();
                 long timeoutMillis = next.getValue().getHeartbeatTimeoutMillis();
+                // 比较时间戳，判断是否超时
                 if ((last + timeoutMillis) < System.currentTimeMillis()) {
+                    // 如果心跳超时，则关闭 channel，并触发 onChannelDestroy 回调
                     RemotingHelper.closeChannel(next.getValue().getChannel());
                     log.warn("The broker channel expired, {} {}ms", next.getKey(), timeoutMillis);
                     this.onChannelDestroy(next.getKey());
@@ -775,12 +790,17 @@ public class RouteInfoManager {
     }
 
     public void onChannelDestroy(BrokerAddrInfo brokerAddrInfo) {
+        // 实例化一个 UnRegisterBrokerRequestHeader 对象
         UnRegisterBrokerRequestHeader unRegisterRequest = new UnRegisterBrokerRequestHeader();
+        // 标记位，记录是否需要 unregister；
+        // 如果能够从 broker 基础信息 map 中找到这个 broker 则表示需要 unregister
         boolean needUnRegister = false;
         if (brokerAddrInfo != null) {
             try {
                 try {
+                    // 加读锁
                     this.lock.readLock().lockInterruptibly();
+                    // 遍历 broker 基础信息 map，找到对应的 broker，并将信息填充到 unRegisterRequest 中
                     needUnRegister = setupUnRegisterRequest(unRegisterRequest, brokerAddrInfo);
                 } finally {
                     this.lock.readLock().unlock();
@@ -791,6 +811,7 @@ public class RouteInfoManager {
         }
 
         if (needUnRegister) {
+            // 将消息填充到 unregistrationQueue 中
             boolean result = this.submitUnRegisterBrokerRequest(unRegisterRequest);
             log.info("the broker's channel destroyed, submit the unregister request at once, " +
                 "broker info: {}, submit result: {}", unRegisterRequest, result);
@@ -835,15 +856,18 @@ public class RouteInfoManager {
         unRegisterRequest.setClusterName(brokerAddrInfo.getClusterName());
         unRegisterRequest.setBrokerAddr(brokerAddrInfo.getBrokerAddr());
 
+        // 遍历 broker 基础信息 map
         for (Entry<String, BrokerData> stringBrokerDataEntry : this.brokerAddrTable.entrySet()) {
             BrokerData brokerData = stringBrokerDataEntry.getValue();
             if (!brokerAddrInfo.getClusterName().equals(brokerData.getCluster())) {
                 continue;
             }
 
+            // 以下为相同 cluster 的 brokerData
             for (Entry<Long, String> entry : brokerData.getBrokerAddrs().entrySet()) {
                 Long brokerId = entry.getKey();
                 String brokerAddr = entry.getValue();
+                // 判断是否存在相同 brokerAddr 的 brokerId(这可能是考虑并发？)
                 if (brokerAddr.equals(brokerAddrInfo.getBrokerAddr())) {
                     unRegisterRequest.setBrokerName(brokerData.getBrokerName());
                     unRegisterRequest.setBrokerId(brokerId);

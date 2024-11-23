@@ -22,6 +22,7 @@ package org.apache.rocketmq.remoting.protocol.route;
 
 public class QueueData implements Comparable<QueueData> {
     private String brokerName;
+    // 读对列和写对列的数量，暂时还不知道为什么要有两种对列？2024-11-23
     private int readQueueNums;
     private int writeQueueNums;
     private int perm;

@@ -101,12 +101,19 @@ public class NamesrvController {
     }
 
     public boolean initialize() {
+        // 加载 kv 配置（即从 configuration 中配置的路径加载已有的配置信息）
         loadConfig();
+        // 初始化网络组件，即创建 NettyServer 网络处理对象
         initiateNetworkComponents();
+        // 初始化线程池
         initiateThreadExecutors();
+        // 注册 request processor
         registerProcessor();
+        // 启动定时任务
         startScheduleService();
+        // 初始化 SSL 上下文
         initiateSslContext();
+        // 初始化 RPC 回调函数
         initiateRpcHooks();
         return true;
     }
@@ -116,12 +123,15 @@ public class NamesrvController {
     }
 
     private void startScheduleService() {
+        // 定时任务1：每隔 scanNotActiveBrokerInterval 毫秒，扫描不活跃的 broker
         this.scanExecutorService.scheduleAtFixedRate(NamesrvController.this.routeInfoManager::scanNotActiveBroker,
             5, this.namesrvConfig.getScanNotActiveBrokerInterval(), TimeUnit.MILLISECONDS);
 
+        // 定时任务2：每隔 10 分钟，打印所有的 KV 配置信息
         this.scheduledExecutorService.scheduleAtFixedRate(NamesrvController.this.kvConfigManager::printAllPeriodically,
             1, 10, TimeUnit.MINUTES);
 
+        // 定时任务3：每隔 10 秒，打印高水位信息
         this.scheduledExecutorService.scheduleAtFixedRate(() -> {
             try {
                 NamesrvController.this.printWaterMark();

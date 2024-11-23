@@ -42,13 +42,23 @@ public class KVConfigManager {
     }
 
     public void load() {
+        // 尝试从文件中读取 KV 配置（以一个长 string 的形式读取配置信息）
         String content = null;
         try {
             content = MixAll.file2String(this.namesrvController.getNamesrvConfig().getKvConfigPath());
         } catch (IOException e) {
             log.warn("Load KV config table exception", e);
         }
+        // 尝试以 json 的形式解析 KV 配置，并存储到 configTable 中
         if (content != null) {
+            // 将 json 格式的 KV 配置信息解析为 KVConfigSerializeWrapper 对象
+            /*
+            - namespace1:
+                - key1: value1
+                - key2: value2
+            - namespace2:
+                - key1: value1
+             */
             KVConfigSerializeWrapper kvConfigSerializeWrapper =
                 KVConfigSerializeWrapper.fromJson(content, KVConfigSerializeWrapper.class);
             if (null != kvConfigSerializeWrapper) {

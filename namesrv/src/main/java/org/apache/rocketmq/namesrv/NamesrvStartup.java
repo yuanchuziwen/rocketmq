@@ -57,7 +57,9 @@ public class NamesrvStartup {
 
     public static NamesrvController main0(String[] args) {
         try {
+            // 解析命令行参数和配置文件
             parseCommandlineAndConfigFile(args);
+            // 根据启动属性创建 NamesrvController 对象
             NamesrvController controller = createAndStartNamesrvController();
             return controller;
         } catch (Throwable e) {
@@ -90,16 +92,21 @@ public class NamesrvStartup {
             return;
         }
 
+        // 先创建 NamesrvConfig（NameServer业务参数）、NettyServerConfig（NameServer网络参数）
         namesrvConfig = new NamesrvConfig();
         nettyServerConfig = new NettyServerConfig();
         nettyClientConfig = new NettyClientConfig();
         nettyServerConfig.setListenPort(9876);
+        // 将配置填充到上述 config 对象中
+        // -c configFile 参数指定了配置文件的路径
         if (commandLine.hasOption('c')) {
             String file = commandLine.getOptionValue('c');
             if (file != null) {
                 InputStream in = new BufferedInputStream(Files.newInputStream(Paths.get(file)));
+                // 将配置文件中的内容读取到 Properties 对象中
                 properties = new Properties();
                 properties.load(in);
+                // 将 Properties 对象中的内容填充到 config 对象中
                 MixAll.properties2Object(properties, namesrvConfig);
                 MixAll.properties2Object(properties, nettyServerConfig);
                 MixAll.properties2Object(properties, nettyClientConfig);
@@ -114,6 +121,7 @@ public class NamesrvStartup {
             }
         }
 
+        // 用户可能使用 --key value 的方式指定参数，将这些参数填充到 config 对象中
         MixAll.properties2Object(ServerUtil.commandLine2Properties(commandLine), namesrvConfig);
         if (commandLine.hasOption('p')) {
             MixAll.printObjectProperties(logConsole, namesrvConfig);
@@ -125,10 +133,12 @@ public class NamesrvStartup {
             System.exit(0);
         }
 
+        // 要求必须配置 ROCKETMQ_HOME 的值
         if (null == namesrvConfig.getRocketmqHome()) {
             System.out.printf("Please set the %s variable in your environment to match the location of the RocketMQ installation%n", MixAll.ROCKETMQ_HOME_ENV);
             System.exit(-2);
         }
+        // 打印读取到的配置
         MixAll.printObjectProperties(log, namesrvConfig);
         MixAll.printObjectProperties(log, nettyServerConfig);
 
@@ -139,14 +149,15 @@ public class NamesrvStartup {
         NamesrvController controller = createNamesrvController();
         start(controller);
         NettyServerConfig serverConfig = controller.getNettyServerConfig();
-        String tip = String.format("The Name Server boot success. serializeType=%s, address %s:%d", RemotingCommand.getSerializeTypeConfigInThisServer(), serverConfig.getBindAddress(), serverConfig.getListenPort());
+        String tip = String.format("The Name Server boot success. serializeType=%s, address %s:%d",
+                RemotingCommand.getSerializeTypeConfigInThisServer(), serverConfig.getBindAddress(), serverConfig.getListenPort());
         log.info(tip);
         System.out.printf("%s%n", tip);
         return controller;
     }
 
     public static NamesrvController createNamesrvController() {
-
+        // 创建并配置 NamesrvController 对象
         final NamesrvController controller = new NamesrvController(namesrvConfig, nettyServerConfig, nettyClientConfig);
         // remember all configs to prevent discard
         controller.getConfiguration().registerConfig(properties);
@@ -159,17 +170,21 @@ public class NamesrvStartup {
             throw new IllegalArgumentException("NamesrvController is null");
         }
 
+        // 初始化 NamesrvController 对象
         boolean initResult = controller.initialize();
         if (!initResult) {
             controller.shutdown();
             System.exit(-3);
         }
 
+        // 注册 ShutdownHook 线程，用于在 JVM 关闭时，执行 controller.shutdown() 方法
         Runtime.getRuntime().addShutdownHook(new ShutdownHookThread(log, (Callable<Void>) () -> {
+            // 主要是关闭 controller 中的线程池、定时器、nettyServer 等资源
             controller.shutdown();
             return null;
         }));
 
+        // 启动 NamesrvController 对象
         controller.start();
 
         return controller;

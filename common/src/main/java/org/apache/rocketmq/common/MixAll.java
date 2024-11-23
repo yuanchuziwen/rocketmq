@@ -350,10 +350,13 @@ public class MixAll {
             String mn = method.getName();
             if (mn.startsWith("set")) {
                 try {
+                    // 通过方法名解析到属性名 -> setXxx -> xxx
                     String tmp = mn.substring(4);
                     String first = mn.substring(3, 4);
 
+                    // 根据解析得到的 xxx 获取其对应的属性值
                     String key = first.toLowerCase() + tmp;
+                    // 将解析得到的字符串类型的属性值转换为对应的属性类型
                     String property = p.getProperty(key);
                     if (property != null) {
                         Class<?>[] pt = method.getParameterTypes();
