@@ -1679,9 +1679,10 @@ public class BrokerController {
     }
 
     public synchronized void registerBrokerAll(final boolean checkOrderConfig, boolean oneway, boolean forceRegister) {
-
+        // 向 nameServ 发送心跳
         TopicConfigAndMappingSerializeWrapper topicConfigWrapper = new TopicConfigAndMappingSerializeWrapper();
 
+        // 向 topicConfigWrapper 中填充 topic 信息
         topicConfigWrapper.setDataVersion(this.getTopicConfigManager().getDataVersion());
         topicConfigWrapper.setTopicConfigTable(this.getTopicConfigManager().getTopicConfigTable());
 
@@ -1689,6 +1690,7 @@ public class BrokerController {
             entry -> new AbstractMap.SimpleImmutableEntry<>(entry.getKey(), TopicQueueMappingDetail.cloneAsMappingInfo(entry.getValue()))
         ).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
 
+        // 如果 broker 不可读或不可写，则将 topic 的权限设置为 broker 的权限
         if (!PermName.isWriteable(this.getBrokerConfig().getBrokerPermission())
             || !PermName.isReadable(this.getBrokerConfig().getBrokerPermission())) {
             ConcurrentHashMap<String, TopicConfig> topicConfigTable = new ConcurrentHashMap<>();
@@ -1701,6 +1703,7 @@ public class BrokerController {
             topicConfigWrapper.setTopicConfigTable(topicConfigTable);
         }
 
+        // 判断是否需要发送注册请求
         if (forceRegister || needRegister(this.brokerConfig.getBrokerClusterName(),
             this.getBrokerAddr(),
             this.brokerConfig.getBrokerName(),
@@ -1718,6 +1721,7 @@ public class BrokerController {
             BrokerController.LOG.info("BrokerController#doResterBrokerAll: broker has shutdown, no need to register any more.");
             return;
         }
+        // 交给 brokerOuterAPI 去注册
         List<RegisterBrokerResult> registerBrokerResultList = this.brokerOuterAPI.registerBrokerAll(
             this.brokerConfig.getBrokerClusterName(),
             this.getBrokerAddr(),
@@ -1733,6 +1737,7 @@ public class BrokerController {
             this.brokerConfig.isEnableSlaveActingMaster() ? this.brokerConfig.getBrokerNotActiveTimeoutMillis() : null,
             this.getBrokerIdentity());
 
+        // 处理注册结果
         handleRegisterBrokerResult(registerBrokerResultList, checkOrderConfig);
     }
 
@@ -1834,7 +1839,10 @@ public class BrokerController {
         final boolean isInBrokerContainer) {
 
         TopicConfigSerializeWrapper topicConfigWrapper = this.getTopicConfigManager().buildTopicConfigSerializeWrapper();
+        // 遍历每个 nameServer 判断是否需要注册
+        // 判断 needRegister 和实际执行 register 都是交给 brokerOuterAPI 去做的
         List<Boolean> changeList = brokerOuterAPI.needRegister(clusterName, brokerAddr, brokerName, brokerId, topicConfigWrapper, timeoutMills, isInBrokerContainer);
+        // 一旦有一个需要注册，那么就是需要注册
         boolean needRegister = false;
         for (Boolean changed : changeList) {
             if (changed) {

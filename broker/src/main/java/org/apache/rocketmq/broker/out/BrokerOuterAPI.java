@@ -468,9 +468,11 @@ public class BrokerOuterAPI {
         final BrokerIdentity brokerIdentity) {
 
         final List<RegisterBrokerResult> registerBrokerResultList = new CopyOnWriteArrayList<>();
+        // 获取所有有效的 NameServer 地址列表
         List<String> nameServerAddressList = this.remotingClient.getAvailableNameSrvList();
         if (nameServerAddressList != null && nameServerAddressList.size() > 0) {
 
+            // 构造注册 Broker 的请求
             final RegisterBrokerRequestHeader requestHeader = new RegisterBrokerRequestHeader();
             requestHeader.setBrokerAddr(brokerAddr);
             requestHeader.setBrokerId(brokerId);
@@ -483,18 +485,25 @@ public class BrokerOuterAPI {
                 requestHeader.setHeartbeatTimeoutMillis(heartbeatTimeoutMillis);
             }
 
+            // 会将 TopicConfigSerializeWrapper 转换为 RegisterBrokerBody 对象，即心跳消息中包含了 broker 中的所有 topic 的详细信息
             RegisterBrokerBody requestBody = new RegisterBrokerBody();
             requestBody.setTopicConfigSerializeWrapper(TopicConfigAndMappingSerializeWrapper.from(topicConfigWrapper));
+            // 记录 FilterServer 列表
             requestBody.setFilterServerList(filterServerList);
             final byte[] body = requestBody.encode(compressed);
+            // 计算 Body 的 CRC32
             final int bodyCrc32 = UtilAll.crc32(body);
             requestHeader.setBodyCrc32(bodyCrc32);
+
+            // 这里又搞了一个 countdownLatch
             final CountDownLatch countDownLatch = new CountDownLatch(nameServerAddressList.size());
+            // 遍历所有 nameServ 列表
             for (final String namesrvAddr : nameServerAddressList) {
                 brokerOuterExecutor.execute(new AbstractBrokerRunnable(brokerIdentity) {
                     @Override
                     public void run0() {
                         try {
+                            // Broker 消息服务器依次向 NameServer 发送心跳包
                             RegisterBrokerResult result = registerBroker(namesrvAddr, oneway, timeoutMills, requestHeader, body);
                             if (result != null) {
                                 registerBrokerResultList.add(result);
@@ -504,6 +513,7 @@ public class BrokerOuterAPI {
                         } catch (Exception e) {
                             LOGGER.error("Failed to register current broker to name server. TargetHost={}", namesrvAddr, e);
                         } finally {
+                            // 递减 countDownLatch
                             countDownLatch.countDown();
                         }
                     }
@@ -511,6 +521,7 @@ public class BrokerOuterAPI {
             }
 
             try {
+                // 等待所有 NameServer 的注册请求完成
                 if (!countDownLatch.await(timeoutMills, TimeUnit.MILLISECONDS)) {
                     LOGGER.warn("Registration to one or more name servers does NOT complete within deadline. Timeout threshold: {}ms", timeoutMills);
                 }
@@ -532,6 +543,7 @@ public class BrokerOuterAPI {
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.REGISTER_BROKER, requestHeader);
         request.setBody(body);
 
+        // 如果是只需要单向通信，那么就调用 invokeOneway 方法，直接发出消息，不需要等待返回结果
         if (oneway) {
             try {
                 this.remotingClient.invokeOneway(namesrvAddr, request, timeoutMills);
@@ -622,12 +634,15 @@ public class BrokerOuterAPI {
         final List<Boolean> changedList = new CopyOnWriteArrayList<>();
         List<String> nameServerAddressList = this.remotingClient.getNameServerAddressList();
         if (nameServerAddressList != null && nameServerAddressList.size() > 0) {
+            // 搞一个 countdownLatch
             final CountDownLatch countDownLatch = new CountDownLatch(nameServerAddressList.size());
+            // 遍历 nameServerAddressList，然后针对每个 nameServerAddress 发送一个异步请求（交给线程池执行）
             for (final String namesrvAddr : nameServerAddressList) {
                 brokerOuterExecutor.execute(new AbstractBrokerRunnable(new BrokerIdentity(clusterName, brokerName, brokerId, isInBrokerContainer)) {
                     @Override
                     public void run0() {
                         try {
+                            // 构造查询 DATA_VERSION 的请求
                             QueryDataVersionRequestHeader requestHeader = new QueryDataVersionRequestHeader();
                             requestHeader.setBrokerAddr(brokerAddr);
                             requestHeader.setBrokerId(brokerId);
@@ -635,16 +650,19 @@ public class BrokerOuterAPI {
                             requestHeader.setClusterName(clusterName);
                             RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.QUERY_DATA_VERSION, requestHeader);
                             request.setBody(topicConfigWrapper.getDataVersion().encode());
+                            // 发送请求
                             RemotingCommand response = remotingClient.invokeSync(namesrvAddr, request, timeoutMills);
                             DataVersion nameServerDataVersion = null;
                             Boolean changed = false;
                             switch (response.getCode()) {
                                 case ResponseCode.SUCCESS: {
+                                    // 解析响应
                                     QueryDataVersionResponseHeader queryDataVersionResponseHeader =
                                         (QueryDataVersionResponseHeader) response.decodeCommandCustomHeader(QueryDataVersionResponseHeader.class);
                                     changed = queryDataVersionResponseHeader.getChanged();
                                     byte[] body = response.getBody();
                                     if (body != null) {
+                                        // 判断 DATA_VERSION 是否一致
                                         nameServerDataVersion = DataVersion.decode(body, DataVersion.class);
                                         if (!topicConfigWrapper.getDataVersion().equals(nameServerDataVersion)) {
                                             changed = true;
@@ -662,6 +680,7 @@ public class BrokerOuterAPI {
                             changedList.add(Boolean.TRUE);
                             LOGGER.error("Query data version from name server {}  Exception, {}", namesrvAddr, e);
                         } finally {
+                            // 每个任务执行完之后，都要 countDown 一次
                             countDownLatch.countDown();
                         }
                     }
@@ -669,6 +688,7 @@ public class BrokerOuterAPI {
 
             }
             try {
+                // 等待直到所有任务都执行完，或者超时
                 countDownLatch.await(timeoutMills, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 LOGGER.error("query dataversion from nameserver countDownLatch await Exception", e);
