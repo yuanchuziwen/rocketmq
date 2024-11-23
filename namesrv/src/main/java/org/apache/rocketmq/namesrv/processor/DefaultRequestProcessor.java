@@ -222,6 +222,7 @@ public class DefaultRequestProcessor implements NettyRequestProcessor {
             return response;
         }
 
+        // 从请求体中解析得到 topicConfigWrapper 和 filterServerList
         TopicConfigSerializeWrapper topicConfigWrapper = null;
         List<String> filterServerList = null;
 
@@ -235,6 +236,7 @@ public class DefaultRequestProcessor implements NettyRequestProcessor {
             topicConfigWrapper = extractRegisterTopicConfigFromRequest(request);
         }
 
+        // 交给 RouteInfoManager 处理
         RegisterBrokerResult result = this.namesrvController.getRouteInfoManager().registerBroker(
             requestHeader.getClusterName(),
             requestHeader.getBrokerAddr(),
@@ -249,6 +251,7 @@ public class DefaultRequestProcessor implements NettyRequestProcessor {
             ctx.channel()
         );
 
+        // 如果 result 为 null，说明此时 brokerAddrTable 里面还没有对应的 broker 信息，可能是还没有第一次注册完成
         if (result == null) {
             // Register single topic route info should be after the broker completes the first registration.
             response.setCode(ResponseCode.SYSTEM_ERROR);

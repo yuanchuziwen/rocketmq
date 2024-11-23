@@ -240,14 +240,17 @@ public class RouteInfoManager {
         final Channel channel) {
         RegisterBrokerResult result = new RegisterBrokerResult();
         try {
+            // 加写锁
             this.lock.writeLock().lockInterruptibly();
 
             //init or update the cluster info
+            // 从 clusterAddrTable 中获取 clusterName 对应的 brokerName 集合
             Set<String> brokerNames = ConcurrentHashMapUtils.computeIfAbsent((ConcurrentHashMap<String, Set<String>>) this.clusterAddrTable, clusterName, k -> new HashSet<>());
             brokerNames.add(brokerName);
 
             boolean registerFirst = false;
 
+            // 判断这个 broker 是否是第一次注册
             BrokerData brokerData = this.brokerAddrTable.get(brokerName);
             if (null == brokerData) {
                 registerFirst = true;
@@ -261,6 +264,7 @@ public class RouteInfoManager {
 
             Map<Long, String> brokerAddrsMap = brokerData.getBrokerAddrs();
 
+            // 根据这个注册的 brokerId 判断此时 nameServer 中记载的最小 brokerId 是否发生变化
             boolean isMinBrokerIdChanged = false;
             long prevMinBrokerId = 0;
             if (!brokerAddrsMap.isEmpty()) {
@@ -273,9 +277,11 @@ public class RouteInfoManager {
 
             //Switch slave to master: first remove <1, IP:PORT> in namesrv, then add <0, IP:PORT>
             //The same IP:PORT must only have one record in brokerAddrTable
+            // 从 brokerAddrsMap 中移除与待注册的 broker 相同的 IP:PORT 的其他 broker
             brokerAddrsMap.entrySet().removeIf(item -> null != brokerAddr && brokerAddr.equals(item.getValue()) && brokerId != item.getKey());
 
             //If Local brokerId stateVersion bigger than the registering one,
+            // 如果此时元数据 map 中维护的注册信息版本比当前注册的版本要新，则直接返回（可能是网络延迟导致的）
             String oldBrokerAddr = brokerAddrsMap.get(brokerId);
             if (null != oldBrokerAddr && !oldBrokerAddr.equals(brokerAddr)) {
                 BrokerLiveInfo oldBrokerInfo = brokerLiveTable.get(new BrokerAddrInfo(clusterName, oldBrokerAddr));
@@ -300,6 +306,7 @@ public class RouteInfoManager {
                 return null;
             }
 
+            // 将 broker 中的 topic 信息记录到 topicQueueTable 中
             String oldAddr = brokerAddrsMap.put(brokerId, brokerAddr);
             registerFirst = registerFirst || (StringUtils.isEmpty(oldAddr));
 
@@ -341,6 +348,7 @@ public class RouteInfoManager {
                 }
             }
 
+            // 将 broker 信息记录到 brokerLiveTable 中
             BrokerAddrInfo brokerAddrInfo = new BrokerAddrInfo(clusterName, brokerAddr);
             BrokerLiveInfo prevBrokerLiveInfo = this.brokerLiveTable.put(brokerAddrInfo,
                 new BrokerLiveInfo(
@@ -353,6 +361,7 @@ public class RouteInfoManager {
                 log.info("new broker registered, {} HAService: {}", brokerAddrInfo, haServerAddr);
             }
 
+            // 记录 FilterServer 信息
             if (filterServerList != null) {
                 if (filterServerList.isEmpty()) {
                     this.filterServerTable.remove(brokerAddrInfo);
