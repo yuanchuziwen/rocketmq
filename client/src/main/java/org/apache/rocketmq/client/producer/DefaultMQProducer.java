@@ -1029,12 +1029,15 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     private MessageBatch batch(Collection<Message> msgs) throws MQClientException {
         MessageBatch msgBatch;
         try {
+            // 将一个集合内的多条 msg 合并成一个 MessageBatch
             msgBatch = MessageBatch.generateFromList(msgs);
             for (Message message : msgBatch) {
                 Validators.checkMessage(message, this);
+                // 为 batch 内的每个 msg 设置唯一 ID
                 MessageClientIDSetter.setUniqID(message);
                 message.setTopic(withNamespace(message.getTopic()));
             }
+            // 再为整个 MessageBatch 设置唯一 ID
             MessageClientIDSetter.setUniqID(msgBatch);
             msgBatch.setBody(msgBatch.encode());
         } catch (Exception e) {
