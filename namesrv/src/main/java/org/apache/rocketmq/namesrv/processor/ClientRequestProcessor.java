@@ -57,10 +57,13 @@ public class ClientRequestProcessor implements NettyRequestProcessor {
 
     public RemotingCommand getRouteInfoByTopic(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
+        // 初始化 response 对象
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
+        // 解析请求头
         final GetRouteInfoRequestHeader requestHeader =
             (GetRouteInfoRequestHeader) request.decodeCommandCustomHeader(GetRouteInfoRequestHeader.class);
 
+        // 判断 Name Server 是否正常
         boolean namesrvReady = needCheckNamesrvReady.get() && System.currentTimeMillis() - startupTimeMillis >= TimeUnit.SECONDS.toMillis(namesrvController.getNamesrvConfig().getWaitSecondsForService());
 
         if (namesrvController.getNamesrvConfig().isNeedWaitForService() && !namesrvReady) {
@@ -70,6 +73,7 @@ public class ClientRequestProcessor implements NettyRequestProcessor {
             return response;
         }
 
+        // 从 RouteInfoManager 中根据 topic 获取 TopicRouteData 对象
         TopicRouteData topicRouteData = this.namesrvController.getRouteInfoManager().pickupTopicRouteData(requestHeader.getTopic());
 
         if (topicRouteData != null) {
@@ -85,6 +89,7 @@ public class ClientRequestProcessor implements NettyRequestProcessor {
                 topicRouteData.setOrderTopicConf(orderTopicConf);
             }
 
+            // 序列化 TopicRouteData 对象
             byte[] content;
             Boolean standardJsonOnly = requestHeader.getAcceptStandardJsonOnly();
             if (request.getVersion() >= MQVersion.Version.V4_9_4.ordinal() || null != standardJsonOnly && standardJsonOnly) {

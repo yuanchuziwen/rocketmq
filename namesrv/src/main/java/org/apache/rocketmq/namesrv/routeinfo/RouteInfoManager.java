@@ -546,29 +546,35 @@ public class RouteInfoManager {
     }
 
     public void unRegisterBroker(Set<UnRegisterBrokerRequestHeader> unRegisterRequests) {
+        // 注销 broker
         try {
             Set<String> removedBroker = new HashSet<>();
             Set<String> reducedBroker = new HashSet<>();
             Map<String, BrokerStatusChangeInfo> needNotifyBrokerMap = new HashMap<>();
 
+            // 加写锁
             this.lock.writeLock().lockInterruptibly();
+            // 遍历所有的注销请求
             for (final UnRegisterBrokerRequestHeader unRegisterRequest : unRegisterRequests) {
                 final String brokerName = unRegisterRequest.getBrokerName();
                 final String clusterName = unRegisterRequest.getClusterName();
                 final String brokerAddr = unRegisterRequest.getBrokerAddr();
-
+                // 基于待注销的 broker 封装 BrokerAddrInfo 对象
                 BrokerAddrInfo brokerAddrInfo = new BrokerAddrInfo(clusterName, brokerAddr);
 
+                // 从 brokerLiveTable 中移除 broker
                 BrokerLiveInfo brokerLiveInfo = this.brokerLiveTable.remove(brokerAddrInfo);
                 log.info("unregisterBroker, remove from brokerLiveTable {}, {}",
                     brokerLiveInfo != null ? "OK" : "Failed",
                     brokerAddrInfo
                 );
 
+                // 从 filterServerTable 中移除 broker
                 this.filterServerTable.remove(brokerAddrInfo);
 
                 boolean removeBrokerName = false;
                 boolean isMinBrokerIdChanged = false;
+                // 判断 brokerAddrTable 中是否包含 brokerName
                 BrokerData brokerData = this.brokerAddrTable.get(brokerName);
                 if (null != brokerData) {
                     if (!brokerData.getBrokerAddrs().isEmpty() &&
@@ -593,6 +599,7 @@ public class RouteInfoManager {
                     }
                 }
 
+                // 从 clusterAddrTable 中移除 brokerName
                 if (removeBrokerName) {
                     Set<String> nameSet = this.clusterAddrTable.get(clusterName);
                     if (nameSet != null) {
@@ -614,8 +621,10 @@ public class RouteInfoManager {
                 }
             }
 
+            // 清理 topicQueueTable 中的 topic 信息
             cleanTopicByUnRegisterRequests(removedBroker, reducedBroker);
 
+            // 通知 broker 的最小 brokerId 发生变化
             if (!needNotifyBrokerMap.isEmpty() && namesrvConfig.isNotifyMinBrokerIdChanged()) {
                 notifyMinBrokerIdChanged(needNotifyBrokerMap);
             }
@@ -685,14 +694,17 @@ public class RouteInfoManager {
         topicRouteData.setFilterServerTable(filterServerMap);
 
         try {
+            // 加读锁
             this.lock.readLock().lockInterruptibly();
+            // 根据 topic 从 topicQueueTable 中获取 queueDataMap
             Map<String, QueueData> queueDataMap = this.topicQueueTable.get(topic);
             if (queueDataMap != null) {
+                // 取到 queueData 信息
                 topicRouteData.setQueueDatas(new ArrayList<>(queueDataMap.values()));
                 foundQueueData = true;
 
+                // 确认每个 queue 对应的 broker 信息
                 Set<String> brokerNameSet = new HashSet<>(queueDataMap.keySet());
-
                 for (String brokerName : brokerNameSet) {
                     BrokerData brokerData = this.brokerAddrTable.get(brokerName);
                     if (null == brokerData) {

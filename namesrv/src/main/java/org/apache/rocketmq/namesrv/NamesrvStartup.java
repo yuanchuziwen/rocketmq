@@ -145,9 +145,11 @@ public class NamesrvStartup {
     }
 
     public static NamesrvController createAndStartNamesrvController() throws Exception {
-
+        // 创建并配置 NamesrvController 对象
         NamesrvController controller = createNamesrvController();
+        // 开启 NamesrvController 对象
         start(controller);
+        // 打印启动成功的日志
         NettyServerConfig serverConfig = controller.getNettyServerConfig();
         String tip = String.format("The Name Server boot success. serializeType=%s, address %s:%d",
                 RemotingCommand.getSerializeTypeConfigInThisServer(), serverConfig.getBindAddress(), serverConfig.getListenPort());

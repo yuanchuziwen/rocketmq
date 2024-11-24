@@ -57,28 +57,35 @@ public class NamesrvController {
     private static final Logger LOGGER = LoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
     private static final Logger WATER_MARK_LOG = LoggerFactory.getLogger(LoggerName.NAMESRV_WATER_MARK_LOGGER_NAME);
 
+    // namesrv 配置
     private final NamesrvConfig namesrvConfig;
 
+    //netty 相关配置
     private final NettyServerConfig nettyServerConfig;
     private final NettyClientConfig nettyClientConfig;
 
+    // 两个定时任务线程池
     private final ScheduledExecutorService scheduledExecutorService = new ScheduledThreadPoolExecutor(1,
             new BasicThreadFactory.Builder().namingPattern("NSScheduledThread").daemon(true).build());
 
     private final ScheduledExecutorService scanExecutorService = new ScheduledThreadPoolExecutor(1,
             new BasicThreadFactory.Builder().namingPattern("NSScanScheduledThread").daemon(true).build());
 
+    // KV 配置管理器
     private final KVConfigManager kvConfigManager;
+    // 路由信息管理器
     private final RouteInfoManager routeInfoManager;
 
+    // netty 服务端和客户端
     private RemotingClient remotingClient;
     private RemotingServer remotingServer;
 
     private final BrokerHousekeepingService brokerHousekeepingService;
 
+    // 线程池
     private ExecutorService defaultExecutor;
     private ExecutorService clientRequestExecutor;
-
+    // 线程池对应的队列
     private BlockingQueue<Runnable> defaultThreadPoolQueue;
     private BlockingQueue<Runnable> clientRequestThreadPoolQueue;
 
@@ -229,9 +236,11 @@ public class NamesrvController {
             this.remotingServer.registerDefaultProcessor(new ClusterTestRequestProcessor(this, namesrvConfig.getProductEnvName()), this.defaultExecutor);
         } else {
             // Support get route info only temporarily
+            // clientRequestProcessor 用于处理客户端请求（只感知 GET_ROUTEINFO_BY_TOPIC 请求）
             ClientRequestProcessor clientRequestProcessor = new ClientRequestProcessor(this);
             this.remotingServer.registerProcessor(RequestCode.GET_ROUTEINFO_BY_TOPIC, clientRequestProcessor, this.clientRequestExecutor);
 
+            // defaultRequestProcessor 用于处理默认请求（一般是 broker 的请求？）
             this.remotingServer.registerDefaultProcessor(new DefaultRequestProcessor(this), this.defaultExecutor);
         }
     }
