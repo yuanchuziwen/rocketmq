@@ -136,11 +136,15 @@ public class MQClientInstance {
     }
 
     public MQClientInstance(ClientConfig clientConfig, int instanceIndex, String clientId, RPCHook rpcHook) {
+        // 记录客户端配置
         this.clientConfig = clientConfig;
+        // 初始化 netty 相关的配置
         this.nettyClientConfig = new NettyClientConfig();
         this.nettyClientConfig.setClientCallbackExecutorThreads(clientConfig.getClientCallbackExecutorThreads());
         this.nettyClientConfig.setUseTLS(clientConfig.isUseTLS());
         this.nettyClientConfig.setSocksProxyConfig(clientConfig.getSocksProxyConfig());
+        // 初始化 MQClientAPIImpl
+        // ClientRemotingProcessor 是客户端处理 server 端的请求的 processor
         ClientRemotingProcessor clientRemotingProcessor = new ClientRemotingProcessor(this);
         this.mQClientAPIImpl = new MQClientAPIImpl(this.nettyClientConfig, clientRemotingProcessor, rpcHook, clientConfig);
 
@@ -253,12 +257,15 @@ public class MQClientInstance {
                 case CREATE_JUST:
                     this.serviceState = ServiceState.START_FAILED;
                     // If not specified,looking address from name server
+                    // 如果没有指定 namesrvAddr，则从 nameServer 获取
                     if (null == this.clientConfig.getNamesrvAddr()) {
                         this.mQClientAPIImpl.fetchNameServerAddr();
                     }
                     // Start request-response channel
+                    // 启动 remotingClient
                     this.mQClientAPIImpl.start();
                     // Start various schedule tasks
+                    // 启动定时任务，
                     this.startScheduledTask();
                     // Start pull service
                     this.pullMessageService.start();
@@ -281,6 +288,7 @@ public class MQClientInstance {
         if (null == this.clientConfig.getNamesrvAddr()) {
             this.scheduledExecutorService.scheduleAtFixedRate(() -> {
                 try {
+                    // 定时获取 nameServer 地址
                     MQClientInstance.this.mQClientAPIImpl.fetchNameServerAddr();
                 } catch (Exception e) {
                     log.error("ScheduledTask fetchNameServerAddr exception", e);

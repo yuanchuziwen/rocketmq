@@ -47,6 +47,7 @@ public class SendMessageTraceHookImpl implements SendMessageHook {
             return;
         }
         //build the context content of TraceContext
+        // 消息发送前初始化 TraceContext
         TraceContext traceContext = new TraceContext();
         traceContext.setTraceBeans(new ArrayList<>(1));
         context.setMqTraceContext(traceContext);
@@ -66,6 +67,9 @@ public class SendMessageTraceHookImpl implements SendMessageHook {
     @Override
     public void sendMessageAfter(SendMessageContext context) {
         //if it is message trace data,then it doesn't recorded
+        // 消息发送后，基于 response 填充 TraceContext；
+        // 然后将 traceContext 放到 traceContextQueue 中
+        // 也就是说，针对每一条消息，都会有一个 TraceContext，且都会被添加到 traceContextQueue 中
         if (context == null || context.getMessage().getTopic().startsWith(((AsyncTraceDispatcher) localDispatcher).getTraceTopicName())
             || context.getMqTraceContext() == null) {
             return;

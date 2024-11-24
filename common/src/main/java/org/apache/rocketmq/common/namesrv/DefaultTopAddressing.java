@@ -48,6 +48,7 @@ public class DefaultTopAddressing implements TopAddressing {
     public DefaultTopAddressing(final String wsAddr, final String unitName) {
         this.wsAddr = wsAddr;
         this.unitName = unitName;
+        // 加载自定义的 TopAddressing 实现
         this.topAddressingList = loadCustomTopAddressing();
     }
 
@@ -74,6 +75,7 @@ public class DefaultTopAddressing implements TopAddressing {
     }
 
     private List<TopAddressing> loadCustomTopAddressing() {
+        // 基于 spi 机制加载自定义的 TopAddressing 实现
         ServiceLoader<TopAddressing> serviceLoader = ServiceLoader.load(TopAddressing.class);
         Iterator<TopAddressing> iterator = serviceLoader.iterator();
         List<TopAddressing> topAddressingList = new ArrayList<>();
@@ -85,6 +87,7 @@ public class DefaultTopAddressing implements TopAddressing {
 
     @Override
     public final String fetchNSAddr() {
+        // 优先使用自定义的 TopAddressing 实现
         if (!topAddressingList.isEmpty()) {
             for (TopAddressing topAddressing : topAddressingList) {
                 String nsAddress = topAddressing.fetchNSAddr();
@@ -94,6 +97,7 @@ public class DefaultTopAddressing implements TopAddressing {
             }
         }
         // Return result of default implementation
+        // 向 wsAddr 发起 http 请求，获取 NameServer 地址
         return fetchNSAddr(true, 3000);
     }
 
@@ -109,6 +113,7 @@ public class DefaultTopAddressing implements TopAddressing {
     public final String fetchNSAddr(boolean verbose, long timeoutMills) {
         String url = this.wsAddr;
         try {
+            // 拼接 url
             if (null != para && para.size() > 0) {
                 if (!UtilAll.isBlank(this.unitName)) {
                     url = url + "-" + this.unitName + "?nofix=1&";
@@ -127,6 +132,7 @@ public class DefaultTopAddressing implements TopAddressing {
                 }
             }
 
+            // 发起 get 请求
             HttpTinyClient.HttpResult result = HttpTinyClient.httpGet(url, null, null, "UTF-8", timeoutMills);
             if (200 == result.code) {
                 String responseStr = result.content;

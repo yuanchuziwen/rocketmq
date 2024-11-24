@@ -16,13 +16,6 @@
  */
 package org.apache.rocketmq.client.producer;
 
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.CopyOnWriteArraySet;
-import java.util.concurrent.ExecutorService;
 import org.apache.rocketmq.client.ClientConfig;
 import org.apache.rocketmq.client.QueryResult;
 import org.apache.rocketmq.client.Validators;
@@ -41,31 +34,50 @@ import org.apache.rocketmq.common.message.MessageClientIDSetter;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.common.message.MessageQueue;
 import org.apache.rocketmq.common.topic.TopicValidator;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 import org.apache.rocketmq.remoting.RPCHook;
 import org.apache.rocketmq.remoting.exception.RemotingException;
 import org.apache.rocketmq.remoting.protocol.ResponseCode;
-import org.apache.rocketmq.logging.org.slf4j.Logger;
-import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ExecutorService;
 
 /**
  * This class is the entry point for applications intending to send messages. </p>
+ * <p>
+ *     该类是发送消息的入口
  *
  * It's fine to tune fields which exposes getter/setter methods, but keep in mind, all of them should work well out of
  * box for most scenarios. </p>
+ * <p>
+ *     可以调整暴露 getter/setter 方法的字段，但请记住，它们应该在大多数情况下能够很好地工作
  *
  * This class aggregates various <code>send</code> methods to deliver messages to broker(s). Each of them has pros and
  * cons; you'd better understand strengths and weakness of them before actually coding. </p>
+ * <p>
+ *     该类聚合了各种 send 方法，用于将消息发送到 broker。每种方法都有优缺点，最好在实际编码之前了解它们的优势和劣势
  *
  * <p> <strong>Thread Safety:</strong> After configuring and starting process, this class can be regarded as thread-safe
  * and used among multiple threads context. </p>
+ * <p>
+ *     线程安全：在配置和启动过程之后，可以将此类视为线程安全，并在多个线程上下文中使用
  */
 public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Wrapping internal implementations for virtually all methods presented in this class.
+     * <p>
+     *     封装了 DefaultMQProducerImpl 对象，提供了发送消息的方法
      */
     protected final transient DefaultMQProducerImpl defaultMQProducerImpl;
     private final Logger logger = LoggerFactory.getLogger(DefaultMQProducer.class);
+    // 定义可以重试的响应码
     private final Set<Integer> retryResponseCodes = new CopyOnWriteArraySet<>(Arrays.asList(
         ResponseCode.TOPIC_NOT_EXIST,
         ResponseCode.SERVICE_NOT_AVAILABLE,
@@ -78,10 +90,17 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     /**
      * Producer group conceptually aggregates all producer instances of exactly same role, which is particularly
      * important when transactional messages are involved. </p>
+     * <p>
+     *     生产者组，同一个生产者组内的所有生产者实例都有相同的角色，这在涉及事务消息时尤为重要
      *
      * For non-transactional messages, it does not matter as long as it's unique per process. </p>
+     * <p>
+     *     对于非事务消息，只要在同一个进程中唯一即可
      *
      * See <a href="https://rocketmq.apache.org/docs/introduction/02concepts">core concepts</a> for more discussion.
+     *
+     * ---
+     * broker 针对事务在进行回查时，会根据 producerGroup 来选择该组中任何一个生产者发起回查
      */
     private String producerGroup;
 
@@ -121,6 +140,8 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Indicate whether to retry another broker on sending failure internally.
+     * <p>
+     *     指示在内部发送失败时是否重试另一个 broker
      */
     private boolean retryAnotherBrokerWhenNotStoreOK = false;
 
@@ -260,16 +281,22 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
         boolean enableMsgTrace, final String customizedTraceTopic) {
         this.namespace = namespace;
         this.producerGroup = producerGroup;
+        // 创建 DefaultMQProducerImpl 对象
+        // 也就是说，DefaultMQProducer 和 DefaultMQProducerImpl 彼此互相持有对方的引用
         defaultMQProducerImpl = new DefaultMQProducerImpl(this, rpcHook);
         //if client open the message trace feature
+        // 如果允许消息追踪
         if (enableMsgTrace) {
             try {
+                // 也就是说，在开启消息轨迹之后，每个 producer 都会有一个 AsyncTraceDispatcher 对象
+                // AsyncTraceDispatcher 内部包含了临时的本地 trace 信息存储、将 trace 信息发送到 broker 的逻辑（内部是通过异步线程池来发送的）
                 AsyncTraceDispatcher dispatcher = new AsyncTraceDispatcher(producerGroup, TraceDispatcher.Type.PRODUCE, customizedTraceTopic, rpcHook);
                 dispatcher.setHostProducer(this.defaultMQProducerImpl);
                 traceDispatcher = dispatcher;
-                this.defaultMQProducerImpl.registerSendMessageHook(
+                // 向 innerProducer 对象注册回调函数
+                this.defaultMQProducerImpl.registerSendMessageHook( // hook1 - 感知消息的发送
                     new SendMessageTraceHookImpl(traceDispatcher));
-                this.defaultMQProducerImpl.registerEndTransactionHook(
+                this.defaultMQProducerImpl.registerEndTransactionHook( // hook2 - 感知事务消息的发送
                     new EndTransactionTraceHookImpl(traceDispatcher));
             } catch (Throwable e) {
                 logger.error("system mqtrace hook init failed ,maybe can't send msg trace data");
@@ -295,10 +322,13 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
      */
     @Override
     public void start() throws MQClientException {
+        // 设置 producerGroup
         this.setProducerGroup(withNamespace(this.producerGroup));
+        // 启动 innerProducer 对象
         this.defaultMQProducerImpl.start();
         if (null != traceDispatcher) {
             try {
+                // 启动 traceDispatcher 对象（启动 worker 线程，从 queue 中取出 trace 信息并发送）
                 traceDispatcher.start(this.getNamesrvAddr(), this.getAccessChannel());
             } catch (MQClientException e) {
                 logger.warn("trace dispatcher start failed ", e);
@@ -800,6 +830,8 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Search consume queue offset of the given time stamp.
+     * <p>
+     *     搜索给定时间戳的消费队列偏移量。
      *
      * @param mq Instance of MessageQueue
      * @param timestamp from when in milliseconds.

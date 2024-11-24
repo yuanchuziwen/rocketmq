@@ -26,6 +26,10 @@ import java.util.Map;
 
 /**
  * Base interface for MQ management
+ * <p>
+ *     管理 MQ 的基本接口，几乎每个 client 端的实现都会实现这个接口
+ *     ---
+ *     比较奇怪的是，像 createTopic 这个接口，连 consumer 也需要实现。
  */
 public interface MQAdmin {
     /**

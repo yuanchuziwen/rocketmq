@@ -100,12 +100,19 @@ public class DefaultMQProducerImpl implements MQProducerInner {
 
     private final Logger log = LoggerFactory.getLogger(DefaultMQProducerImpl.class);
     private final Random random = new Random();
+    // 对 outer producer 的引用
     private final DefaultMQProducer defaultMQProducer;
+
     private final ConcurrentMap<String/* topic */, TopicPublishInfo> topicPublishInfoTable =
         new ConcurrentHashMap<>();
+
+    // 发消息、发事务消息的 hook，用于消息发送前后的一些处理
+    // 比如消息发送前初始化 TraceContext，消息发送后基于 response 填充 TraceContext
     private final ArrayList<SendMessageHook> sendMessageHookList = new ArrayList<>();
     private final ArrayList<EndTransactionHook> endTransactionHookList = new ArrayList<>();
+    // rpc hook
     private final RPCHook rpcHook;
+
     private final BlockingQueue<Runnable> asyncSenderThreadPoolQueue;
     private final ExecutorService defaultAsyncSenderExecutor;
     protected BlockingQueue<Runnable> checkRequestQueue;
@@ -133,6 +140,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         this.defaultMQProducer = defaultMQProducer;
         this.rpcHook = rpcHook;
 
+        // 创建一个线程池，用于异步发送消息
         this.asyncSenderThreadPoolQueue = new LinkedBlockingQueue<>(50000);
         this.defaultAsyncSenderExecutor = new ThreadPoolExecutor(
             Runtime.getRuntime().availableProcessors(),
@@ -148,6 +156,8 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     return new Thread(r, "AsyncSenderExecutor_" + this.threadIndex.incrementAndGet());
                 }
             });
+
+        // 创建信号量，用于控制发送消息的并发数
         if (defaultMQProducer.getBackPressureForAsyncSendNum() > 10) {
             semaphoreAsyncSendNum = new Semaphore(Math.max(defaultMQProducer.getBackPressureForAsyncSendNum(),10), true);
         } else {
@@ -155,6 +165,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             log.info("semaphoreAsyncSendNum can not be smaller than 10.");
         }
 
+        // 创建信号量，用于控制发送消息的总量大小
         if (defaultMQProducer.getBackPressureForAsyncSendNum() > 1024 * 1024) {
             semaphoreAsyncSendSize = new Semaphore(Math.max(defaultMQProducer.getBackPressureForAsyncSendNum(),1024 * 1024), true);
         } else {
@@ -214,17 +225,25 @@ public class DefaultMQProducerImpl implements MQProducerInner {
 
     public void start(final boolean startFactory) throws MQClientException {
         switch (this.serviceState) {
+            // 初次创建时 start
             case CREATE_JUST:
+                // 状态流转为 START_FAILED
                 this.serviceState = ServiceState.START_FAILED;
 
+                // 检查 producer_group 相关的配置
                 this.checkConfig();
 
+                // 如果 producer_group 不是 CLIENT_INNER_PRODUCER，那么就将 instanceName 设置为进程 ID
                 if (!this.defaultMQProducer.getProducerGroup().equals(MixAll.CLIENT_INNER_PRODUCER_GROUP)) {
                     this.defaultMQProducer.changeInstanceNameToPID();
                 }
 
+                // 获取 MQClientManager 对象，并创建 MQClientInstance 对象
+                // MQClientManager 是全局单例的，内部有一个 table 管理所有的 MQClientInstance
+                // MQClientInstance 是一个客户端实例，封装了与 broker、name server 的通信逻辑
                 this.mQClientFactory = MQClientManager.getInstance().getOrCreateMQClientInstance(this.defaultMQProducer, rpcHook);
 
+                // 向 MQClientInstance 注册 producer（在 clientInstance 维度，一个 producerGroup 只能有一个实例）
                 boolean registerOK = mQClientFactory.registerProducer(this.defaultMQProducer.getProducerGroup(), this);
                 if (!registerOK) {
                     this.serviceState = ServiceState.CREATE_JUST;
@@ -235,14 +254,18 @@ public class DefaultMQProducerImpl implements MQProducerInner {
 
                 this.topicPublishInfoTable.put(this.defaultMQProducer.getCreateTopicKey(), new TopicPublishInfo());
 
+                // 启动 MQClientInstance
                 if (startFactory) {
                     mQClientFactory.start();
                 }
 
                 log.info("the producer [{}] start OK. sendMessageWithVIPChannel={}", this.defaultMQProducer.getProducerGroup(),
                     this.defaultMQProducer.isSendMessageWithVIPChannel());
+                // 完成了 start，状态流转为 RUNNING
                 this.serviceState = ServiceState.RUNNING;
                 break;
+
+                // 其他状态下 start，抛异常
             case RUNNING:
             case START_FAILED:
             case SHUTDOWN_ALREADY:
@@ -261,8 +284,10 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     }
 
     private void checkConfig() throws MQClientException {
+        // 检查 producerGroup 是否合法
         Validators.checkGroup(this.defaultMQProducer.getProducerGroup());
 
+        // 检查 producerGroup 不能是 DEFAULT_PRODUCER
         if (this.defaultMQProducer.getProducerGroup().equals(MixAll.DEFAULT_PRODUCER_GROUP)) {
             throw new MQClientException("producerGroup can not equal " + MixAll.DEFAULT_PRODUCER_GROUP + ", please specify another one.",
                 null);

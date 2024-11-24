@@ -17,18 +17,6 @@
 package org.apache.rocketmq.client.impl;
 
 import com.alibaba.fastjson.JSON;
-import java.io.UnsupportedEncodingException;
-import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.rocketmq.client.ClientConfig;
 import org.apache.rocketmq.client.Validators;
@@ -73,6 +61,8 @@ import org.apache.rocketmq.common.namesrv.DefaultTopAddressing;
 import org.apache.rocketmq.common.namesrv.NameServerUpdateCallback;
 import org.apache.rocketmq.common.namesrv.TopAddressing;
 import org.apache.rocketmq.common.sysflag.PullSysFlag;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 import org.apache.rocketmq.remoting.CommandCustomHeader;
 import org.apache.rocketmq.remoting.InvokeCallback;
 import org.apache.rocketmq.remoting.RPCHook;
@@ -97,6 +87,7 @@ import org.apache.rocketmq.remoting.protocol.ResponseCode;
 import org.apache.rocketmq.remoting.protocol.admin.ConsumeStats;
 import org.apache.rocketmq.remoting.protocol.admin.TopicStatsTable;
 import org.apache.rocketmq.remoting.protocol.body.BrokerMemberGroup;
+import org.apache.rocketmq.remoting.protocol.body.BrokerReplicasInfo;
 import org.apache.rocketmq.remoting.protocol.body.BrokerStatsData;
 import org.apache.rocketmq.remoting.protocol.body.CheckClientRequestBody;
 import org.apache.rocketmq.remoting.protocol.body.ClusterAclVersionInfo;
@@ -109,7 +100,6 @@ import org.apache.rocketmq.remoting.protocol.body.EpochEntryCache;
 import org.apache.rocketmq.remoting.protocol.body.GetConsumerStatusBody;
 import org.apache.rocketmq.remoting.protocol.body.GroupList;
 import org.apache.rocketmq.remoting.protocol.body.HARuntimeInfo;
-import org.apache.rocketmq.remoting.protocol.body.BrokerReplicasInfo;
 import org.apache.rocketmq.remoting.protocol.body.KVTable;
 import org.apache.rocketmq.remoting.protocol.body.LockBatchRequestBody;
 import org.apache.rocketmq.remoting.protocol.body.LockBatchResponseBody;
@@ -191,6 +181,10 @@ import org.apache.rocketmq.remoting.protocol.header.UpdateGlobalWhiteAddrsConfig
 import org.apache.rocketmq.remoting.protocol.header.UpdateGroupForbiddenRequestHeader;
 import org.apache.rocketmq.remoting.protocol.header.ViewBrokerStatsDataRequestHeader;
 import org.apache.rocketmq.remoting.protocol.header.ViewMessageRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.controller.CleanControllerBrokerDataRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.controller.ElectMasterRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.controller.ElectMasterResponseHeader;
+import org.apache.rocketmq.remoting.protocol.header.controller.GetMetaDataResponseHeader;
 import org.apache.rocketmq.remoting.protocol.header.filtersrv.RegisterMessageFilterClassRequestHeader;
 import org.apache.rocketmq.remoting.protocol.header.namesrv.AddWritePermOfBrokerRequestHeader;
 import org.apache.rocketmq.remoting.protocol.header.namesrv.AddWritePermOfBrokerResponseHeader;
@@ -203,10 +197,6 @@ import org.apache.rocketmq.remoting.protocol.header.namesrv.GetRouteInfoRequestH
 import org.apache.rocketmq.remoting.protocol.header.namesrv.PutKVConfigRequestHeader;
 import org.apache.rocketmq.remoting.protocol.header.namesrv.WipeWritePermOfBrokerRequestHeader;
 import org.apache.rocketmq.remoting.protocol.header.namesrv.WipeWritePermOfBrokerResponseHeader;
-import org.apache.rocketmq.remoting.protocol.header.controller.CleanControllerBrokerDataRequestHeader;
-import org.apache.rocketmq.remoting.protocol.header.controller.ElectMasterRequestHeader;
-import org.apache.rocketmq.remoting.protocol.header.controller.ElectMasterResponseHeader;
-import org.apache.rocketmq.remoting.protocol.header.controller.GetMetaDataResponseHeader;
 import org.apache.rocketmq.remoting.protocol.heartbeat.HeartbeatData;
 import org.apache.rocketmq.remoting.protocol.heartbeat.MessageModel;
 import org.apache.rocketmq.remoting.protocol.heartbeat.SubscriptionData;
@@ -217,8 +207,19 @@ import org.apache.rocketmq.remoting.protocol.subscription.GroupForbidden;
 import org.apache.rocketmq.remoting.protocol.subscription.SubscriptionGroupConfig;
 import org.apache.rocketmq.remoting.rpchook.DynamicalExtFieldRPCHook;
 import org.apache.rocketmq.remoting.rpchook.StreamTypeRPCHook;
-import org.apache.rocketmq.logging.org.slf4j.Logger;
-import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
+
+import java.io.UnsupportedEncodingException;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.apache.rocketmq.remoting.protocol.RemotingSysResponseCode.SUCCESS;
 
@@ -241,11 +242,15 @@ public class MQClientAPIImpl implements NameServerUpdateCallback {
         final ClientRemotingProcessor clientRemotingProcessor,
         RPCHook rpcHook, final ClientConfig clientConfig) {
         this.clientConfig = clientConfig;
+        // 初始化 TopAddressing 对象，wsAddr 是通过环境变量初始化得到的
+        // 不知道 wsAddr 是不是 websocketAddr 的意思？
         topAddressing = new DefaultTopAddressing(MixAll.getWSAddr(), clientConfig.getUnitName());
         topAddressing.registerChangeCallBack(this);
+        // 初始化 RemotingClient 对象
         this.remotingClient = new NettyRemotingClient(nettyClientConfig, null);
         this.clientRemotingProcessor = clientRemotingProcessor;
 
+        // 向 RemotingClient 注册一系列的 hook 和关注的 code
         // Inject stream rpc hook first to make reserve field signature
         if (clientConfig.isEnableStreamRequestType()) {
             this.remotingClient.registerRPCHook(new StreamTypeRPCHook());
@@ -277,8 +282,10 @@ public class MQClientAPIImpl implements NameServerUpdateCallback {
 
     public String fetchNameServerAddr() {
         try {
+            // 根据 topAddressing 获取 NameServer 地址
             String addrs = this.topAddressing.fetchNSAddr();
             if (!UtilAll.isBlank(addrs)) {
+                // 解析地址
                 if (!addrs.equals(this.nameSrvAddr)) {
                     log.info("name server address changed, old=" + this.nameSrvAddr + ", new=" + addrs);
                     this.updateNameServerAddressList(addrs);

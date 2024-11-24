@@ -63,7 +63,10 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
     // The last discard number of log
     private AtomicLong discardCount;
     private Thread worker;
+
+    // 会由 hook 回调函数，在消息发送之后，将消息的 trace 信息放入该队列
     private final ArrayBlockingQueue<TraceContext> traceContextQueue;
+
     private final HashMap<String, TraceDataSegment> taskQueueByTopic;
     private ArrayBlockingQueue<Runnable> appenderQueue;
     private volatile Thread shutDownHook;
@@ -97,6 +100,7 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
         } else {
             this.traceTopicName = TopicValidator.RMQ_SYS_TRACE_TOPIC;
         }
+        // 这里没有指定 abortPolicy，所以当队列满了之后，会直接抛出 RejectedExecutionException 异常
         this.traceExecutor = new ThreadPoolExecutor(//
             10, //
             20, //
@@ -144,12 +148,14 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
     }
 
     public void start(String nameSrvAddr, AccessChannel accessChannel) throws MQClientException {
+        // cas 更新启动标记位
         if (isStarted.compareAndSet(false, true)) {
             traceProducer.setNamesrvAddr(nameSrvAddr);
             traceProducer.setInstanceName(TRACE_INSTANCE_NAME + "_" + nameSrvAddr);
             traceProducer.start();
         }
         this.accessChannel = accessChannel;
+        // 创建并启动一个 worker 线程，会从 traceContextQueue 中取出 traceContext，然后封装为 topic 维度的 traceDataSegment；然后交给 traceExecutor 来发送
         this.worker = new Thread(new AsyncRunnable(), "MQ-AsyncTraceDispatcher-Thread-" + dispatcherId);
         this.worker.setDaemon(true);
         this.worker.start();
@@ -184,6 +190,7 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
 
     @Override
     public void flush() {
+        // flush 方法会在 shutdown 方法中调用
         // The maximum waiting time for refresh,avoid being written all the time, resulting in failure to return.
         long end = System.currentTimeMillis() + 500;
         while (System.currentTimeMillis() <= end) {
@@ -251,10 +258,12 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
         @Override
         public void run() {
             while (!stopped) {
+                // 针对 traceContextQueue 加锁
                 synchronized (traceContextQueue) {
                     long endTime = System.currentTimeMillis() + pollingTimeMil;
                     while (System.currentTimeMillis() < endTime) {
                         try {
+                            // 从 traceContextQueue 中取出 TraceContext
                             TraceContext traceContext = traceContextQueue.poll(
                                 endTime - System.currentTimeMillis(), TimeUnit.MILLISECONDS
                             );
@@ -264,6 +273,7 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
                                 String traceTopicName = this.getTraceTopicName(traceContext.getRegionId());
 
                                 // get the traceDataSegment which will save this trace message, create if null
+                                // 根据 topic 获取到对应的 TraceDataSegment，如果不存在则创建一个
                                 TraceDataSegment traceDataSegment = taskQueueByTopic.get(traceTopicName);
                                 if (traceDataSegment == null) {
                                     traceDataSegment = new TraceDataSegment(traceTopicName, traceContext.getRegionId());
@@ -273,6 +283,7 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
                                 // encode traceContext and save it into traceDataSegment
                                 // NOTE if data size in traceDataSegment more than maxMsgSize,
                                 //  a AsyncDataSendTask will be created and submitted
+                                // 将 traceContext 编码成 TraceTransferBean，并添加到 traceDataSegment 中
                                 TraceTransferBean traceTransferBean = TraceDataEncoder.encoderFromContextBean(traceContext);
                                 traceDataSegment.addTraceTransferBean(traceTransferBean);
                             }
@@ -283,6 +294,7 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
 
                     // NOTE send the data in traceDataSegment which the first TraceTransferBean
                     //  is longer than waitTimeThreshold
+                    // 将 traceDataSegment 中的数据发送出去（通过 mq 发送到某个指定的内部 topic 中）
                     sendDataByTimeThreshold();
 
                     if (AsyncTraceDispatcher.this.stopped) {
@@ -295,8 +307,10 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
 
         private void sendDataByTimeThreshold() {
             long now = System.currentTimeMillis();
+            // 遍历每个 topic 对应的 TraceDataSegment 信息
             for (TraceDataSegment taskInfo : taskQueueByTopic.values()) {
                 if (now - taskInfo.firstBeanAddTime >= waitTimeThresholdMil) {
+                    // 发送消息
                     taskInfo.sendAllData();
                 }
             }
@@ -342,7 +356,9 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
             if (this.traceTransferBeanList.isEmpty()) {
                 return;
             }
+            // 这个 list 应该是消息维度的，表示一个 topic 内的积攒下来的所有消息的 trace 信息
             List<TraceTransferBean> dataToSend = new ArrayList(traceTransferBeanList);
+            // 初始化一个消息发送的任务，然后提交给 traceExecutor；然后会由 traceExecutor 来发送消息
             AsyncDataSendTask asyncDataSendTask = new AsyncDataSendTask(traceTopicName, regionId, dataToSend);
             traceExecutor.submit(asyncDataSendTask);
 
