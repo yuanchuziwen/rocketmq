@@ -50,10 +50,13 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
 
     @Override
     public boolean isAvailable(final String name) {
+        // 获取到对应的 brokerName 的 FaultItem 对象
         final FaultItem faultItem = this.faultItemTable.get(name);
+        // 交给 FaultItem 对象判断是否可用
         if (faultItem != null) {
             return faultItem.isAvailable();
         }
+        // 如果不存在，则默认可用
         return true;
     }
 
@@ -92,8 +95,11 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
     }
 
     class FaultItem implements Comparable<FaultItem> {
+        // broker 名称
         private final String name;
+        // 消息发送故障的延迟时间
         private volatile long currentLatency;
+        // 故障开始时间
         private volatile long startTimestamp;
 
         public FaultItem(final String name) {
@@ -125,6 +131,7 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
             return 0;
         }
 
+        // 判断当前 broker 是否可用
         public boolean isAvailable() {
             return (System.currentTimeMillis() - startTimestamp) >= 0;
         }

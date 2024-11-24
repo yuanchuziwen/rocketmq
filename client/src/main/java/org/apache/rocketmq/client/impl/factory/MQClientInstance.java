@@ -119,7 +119,7 @@ public class MQClientInstance {
      * And the value is the broker instance list that belongs to the broker cluster.
      * For the sub map, the key is the id of single broker instance, and the value is the address.
      */
-    private final ConcurrentMap<String, HashMap<Long, String>> brokerAddrTable = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String/* cluster name */, HashMap<Long/* broker Id ? */, String /* address */>> brokerAddrTable = new ConcurrentHashMap<>();
 
     private final ConcurrentMap<String/* Broker Name */, HashMap<String/* address */, Integer>> brokerVersionTable = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "MQClientFactoryScheduledThread"));
@@ -600,10 +600,13 @@ public class MQClientInstance {
     public boolean updateTopicRouteInfoFromNameServer(final String topic, boolean isDefault,
         DefaultMQProducer defaultMQProducer) {
         try {
+            // 加一个锁，每次 updateTopicRouteInfoFromNameServer 只能有一个线程执行
             if (this.lockNamesrv.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 try {
                     TopicRouteData topicRouteData;
+                    // 如果要获取的是默认路由，或者 defaultMQProducer 不为空，则从 nameServer 获取默认 topic 的路由信息
                     if (isDefault && defaultMQProducer != null) {
+                        // 向 nameServer 获取默认 topic 的路由信息
                         topicRouteData = this.mQClientAPIImpl.getDefaultTopicRouteInfoFromNameServer(defaultMQProducer.getCreateTopicKey(),
                             clientConfig.getMqClientApiTimeout());
                         if (topicRouteData != null) {
@@ -613,11 +616,17 @@ public class MQClientInstance {
                                 data.setWriteQueueNums(queueNums);
                             }
                         }
+
+                        // 否则，获取指定 topic 的路由信息
                     } else {
                         topicRouteData = this.mQClientAPIImpl.getTopicRouteInfoFromNameServer(topic, clientConfig.getMqClientApiTimeout());
                     }
+
+
                     if (topicRouteData != null) {
+                        // 获取到旧的 topicRouteData
                         TopicRouteData old = this.topicRouteTable.get(topic);
+                        // 对比新旧 topicRouteData，判断是否需要更新
                         boolean changed = topicRouteData.topicRouteDataChanged(old);
                         if (!changed) {
                             changed = this.isNeedUpdateTopicRouteInfo(topic);
@@ -627,12 +636,14 @@ public class MQClientInstance {
 
                         if (changed) {
 
+                            // 更新 brokerAddrTable
                             for (BrokerData bd : topicRouteData.getBrokerDatas()) {
                                 this.brokerAddrTable.put(bd.getBrokerName(), bd.getBrokerAddrs());
                             }
 
                             // Update endpoint map
                             {
+                                // 获取 topic 的路由信息，转换为 MessageQueue 和 brokerName 的映射
                                 ConcurrentMap<MessageQueue, String> mqEndPoints = topicRouteData2EndpointsForStaticTopic(topic, topicRouteData);
                                 if (!mqEndPoints.isEmpty()) {
                                     topicEndPointsTable.put(topic, mqEndPoints);
